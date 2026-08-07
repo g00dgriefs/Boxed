@@ -13,16 +13,16 @@ Simple Python utility to sort files in a folder.
 
 ## Windows Explorer Context Menu
 
-On Windows, launching the app normally will now also install `Sort Folder with Boxed` automatically if it is not already installed.
+On Windows, launching the app normally will now install windows context menu functionality.
 
-If you want to install it explicitly, run:
-
-```powershell
-python sort_downloads.py --install-context-menu
-```
-
-To remove the context menu entry later, run:
+To remove the context menu entry later run:
 
 ```powershell
 python sort_downloads.py --uninstall-context-menu
+```
+
+If you have to install it later run:
+
+```powershell
+python sort_downloads.py --install-context-menu
 ```
