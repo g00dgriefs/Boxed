@@ -76,6 +76,10 @@ def install_context_menu():
         return
 
     script_path = Path(__file__).resolve()
+    icon_path = script_path.with_name("boxed.ico")
+    if not icon_path.exists():
+        icon_path = script_path
+
     python_exec = sys.executable
     if python_exec.lower().endswith("python.exe"):
         pythonw = python_exec[:-9] + "pythonw.exe"
@@ -92,7 +96,7 @@ def install_context_menu():
             command_key = shell_key + r"\command"
             with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, shell_key, 0, winreg.KEY_SET_VALUE) as key:
                 winreg.SetValueEx(key, None, 0, winreg.REG_SZ, "Sort Folder with Boxed")
-                winreg.SetValueEx(key, "Icon", 0, winreg.REG_SZ, str(script_path))
+                winreg.SetValueEx(key, "Icon", 0, winreg.REG_SZ, str(icon_path))
             with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, command_key, 0, winreg.KEY_SET_VALUE) as key:
                 winreg.SetValueEx(key, None, 0, winreg.REG_SZ, command)
             success = True
@@ -442,6 +446,21 @@ class SortApp:
         self.preview_plan = []
 
         root.title("Boxed")
+        if is_windows():
+            icon_path = Path(__file__).resolve().with_name("boxed.ico")
+            if icon_path.exists():
+                try:
+                    if Image is not None and ImageTk is not None:
+                        image = Image.open(icon_path)
+                        self._icon_image = ImageTk.PhotoImage(image)
+                        root.iconphoto(True, self._icon_image)
+                    else:
+                        try:
+                            root.iconbitmap(icon_path.as_posix())
+                        except Exception:
+                            root.iconbitmap(str(icon_path))
+                except Exception:
+                    pass
         root.resizable(True, True)
         root.minsize(780, 420)
 
