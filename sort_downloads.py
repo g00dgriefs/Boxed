@@ -1,15 +1,11 @@
 """
 Boxed
+Felix Bryant
 
-Sorts files in a folder (default: ~/Downloads) into subfolders by file type.
-You can change the folder in the GUI or pass a folder path on the command line.
-Run manually whenever you want to tidy up. Existing files at the destination
-are never overwritten -- matching filenames are skipped and reported.
-
-Usage:
-    python3 sort_downloads.py              # launches GUI
-    python3 sort_downloads.py /path/to/folder
-    python3 sort_downloads.py --dry-run
+Sorts files in a folder (default /Downloads) into subfolders by file type.
+You can change the folder in the GUI or windows context menu.
+Run manually when you want to sort your folders
+Useful tool for clearing space and organizing your files.
 """
 
 import shutil
@@ -32,7 +28,7 @@ try:
 except Exception:
     cv2 = None
 
-# Map of category -> file extensions (lowercase, with dot)
+# map of category names to sets of file extensions
 DEFAULT_CATEGORIES = {
     "Images": {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp", ".heic", ".tiff"},
     "Documents": {".pdf", ".doc", ".docx", ".txt", ".rtf", ".odt", ".md", ".pages"},
@@ -45,7 +41,7 @@ DEFAULT_CATEGORIES = {
     "Code": {".py", ".js", ".ts", ".html", ".css", ".json", ".java", ".c", ".cpp", ".sh"},
 }
 
-# Reusable default extension arrays users can apply to any folder category.
+# array of default filetypes for each category used for functionality and handling
 DEFAULT_FILETYPE_ARRAYS = {
     "Images": {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp", ".heic", ".tiff"},
     "Documents": {".pdf", ".doc", ".docx", ".txt", ".rtf", ".odt", ".md", ".pages"},
@@ -62,6 +58,79 @@ OTHER_CATEGORY = "Other"
 CONFIG_FILE = Path.home() / ".download_sorter_config.json"
 PREVIEW_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".heic"}
 PREVIEW_VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm"}
+
+
+def is_windows():
+    return os.name == "nt"
+
+
+def install_context_menu():
+    if not is_windows():
+        print("Context menu installation is supported only on Windows.")
+        return
+
+    try:
+        import winreg
+    except ImportError:
+        print("Could not import winreg; Windows registry access is unavailable.")
+        return
+
+    script_path = Path(__file__).resolve()
+    python_exec = sys.executable
+    if python_exec.lower().endswith("python.exe"):
+        pythonw = python_exec[:-9] + "pythonw.exe"
+        if Path(pythonw).exists():
+            python_exec = pythonw
+
+    command = f'"{python_exec}" "{script_path}" "%1" --gui'
+    shell_roots = [r"Software\Classes\Directory\shell", r"Software\Classes\Folder\shell"]
+    success = False
+
+    try:
+        for root in shell_roots:
+            shell_key = root + r"\Sort Folder with Boxed"
+            command_key = shell_key + r"\command"
+            with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, shell_key, 0, winreg.KEY_SET_VALUE) as key:
+                winreg.SetValueEx(key, None, 0, winreg.REG_SZ, "Sort Folder with Boxed")
+                winreg.SetValueEx(key, "Icon", 0, winreg.REG_SZ, str(script_path))
+            with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, command_key, 0, winreg.KEY_SET_VALUE) as key:
+                winreg.SetValueEx(key, None, 0, winreg.REG_SZ, command)
+            success = True
+        if success:
+            print("Context menu item 'Sort Folder with Boxed' installed.")
+    except Exception as exc:
+        print(f"Failed to install context menu: {exc}")
+
+
+def uninstall_context_menu():
+    if not is_windows():
+        print("Context menu uninstallation is supported only on Windows.")
+        return
+
+    try:
+        import winreg
+    except ImportError:
+        print("Could not import winreg; Windows registry access is unavailable.")
+        return
+
+    shell_roots = [r"Software\Classes\Directory\shell\Sort Folder with Boxed", r"Software\Classes\Folder\shell\Sort Folder with Boxed"]
+    removed = False
+
+    for shell_key in shell_roots:
+        command_key = shell_key + r"\command"
+        try:
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, command_key)
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, shell_key)
+            removed = True
+        except FileNotFoundError:
+            continue
+        except Exception as exc:
+            print(f"Failed to remove context menu key {shell_key}: {exc}")
+
+    if removed:
+        print("Context menu item 'Sort Folder with Boxed' removed.")
+    else:
+        print("Context menu item is not installed.")
 
 
 def normalize_extension(raw_ext: str):
@@ -329,10 +398,27 @@ def sort_folder(target_dir: Path, categories, category_name_filters=None, dry_ru
 def main():
     args = sys.argv[1:]
     dry_run = "--dry-run" in args
-    args = [a for a in args if a != "--dry-run"]
+    install_context = "--install-context-menu" in args
+    uninstall_context = "--uninstall-context-menu" in args
+    gui_mode = "--gui" in args
+    args = [a for a in args if a not in {"--dry-run", "--install-context-menu", "--uninstall-context-menu", "--gui"}]
     categories, category_name_filters = load_settings()
 
-    # CLI mode when a path argument is provided
+    if install_context:
+        install_context_menu()
+        return
+
+    if uninstall_context:
+        uninstall_context_menu()
+        return
+
+    if gui_mode:
+        initial_folder = Path(args[0]).expanduser().resolve() if args else None
+        if is_windows():
+            install_context_menu()
+        launch_gui(dry_run, categories, category_name_filters, initial_folder=initial_folder)
+        return
+
     if args:
         target_dir = Path(args[0]).expanduser().resolve()
         print(f"Sorting: {target_dir}")
@@ -341,16 +427,14 @@ def main():
         sort_folder(target_dir, categories, category_name_filters=category_name_filters, dry_run=dry_run)
         return
 
-    # GUI mode
+    if is_windows():
+        install_context_menu()
     launch_gui(dry_run, categories, category_name_filters)
 
-
-# ---------------------------------------------------------------------------
 # GUI
-# ---------------------------------------------------------------------------
 
 class SortApp:
-    def __init__(self, root: tk.Tk, initial_dry_run: bool = False, initial_categories=None, initial_name_filters=None):
+    def __init__(self, root: tk.Tk, initial_dry_run: bool = False, initial_categories=None, initial_name_filters=None, initial_folder=None):
         self.root = root
         self.categories = initial_categories or {name: set(exts) for name, exts in DEFAULT_CATEGORIES.items()}
         self.category_name_filters = dict(initial_name_filters or {})
@@ -361,19 +445,19 @@ class SortApp:
         root.resizable(True, True)
         root.minsize(780, 420)
 
-        # ── Folder row ──────────────────────────────────────────────────────
+        # Folder row 
         folder_frame = ttk.Frame(root, padding=(10, 10, 10, 4))
         folder_frame.pack(fill=tk.X)
 
         ttk.Label(folder_frame, text="Folder to sort:").pack(side=tk.LEFT)
 
-        self.folder_var = tk.StringVar(value=str(Path.home() / "Downloads"))
+        self.folder_var = tk.StringVar(value=str(Path(initial_folder).expanduser().resolve()) if initial_folder else str(Path.home() / "Downloads"))
         folder_entry = ttk.Entry(folder_frame, textvariable=self.folder_var, width=48)
         folder_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 4))
 
         ttk.Button(folder_frame, text="Change…", command=self._browse).pack(side=tk.LEFT)
 
-        # ── Options row ─────────────────────────────────────────────────────
+        # Options row
         opt_frame = ttk.Frame(root, padding=(10, 2, 10, 6))
         opt_frame.pack(fill=tk.X)
 
@@ -387,7 +471,7 @@ class SortApp:
         self.sort_btn = ttk.Button(opt_frame, text="Apply Moves", command=self._run_sort)
         self.sort_btn.pack(side=tk.RIGHT)
 
-        # ── Main area ───────────────────────────────────────────────────────
+        # Main area 
         main_frame = ttk.Frame(root, padding=(10, 0, 10, 4))
         main_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -400,6 +484,7 @@ class SortApp:
 
         self.category_menu = tk.Menu(root, tearoff=0)
         self.category_menu.add_command(label="Add Folder", command=self._add_category)
+        self.category_menu.add_command(label="Add Existing Folder", command=self._add_existing_category)
         self.category_menu.add_command(label="Edit Folder Name", command=self._rename_category)
         self.category_menu.add_command(label="Select Parent Folder", command=self._select_parent_folder)
         self.category_menu.add_command(label="Delete Folder", command=self._delete_category)
@@ -408,7 +493,7 @@ class SortApp:
 
         self._refresh_category_list()
 
-        # ── Preview area ────────────────────────────────────────────────────
+        # Preview area
         preview_frame = ttk.LabelFrame(main_frame, text="Preview", padding=(8, 8, 8, 8))
         preview_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(8, 0))
 
@@ -436,7 +521,7 @@ class SortApp:
 
         self.media_preview_win = None
 
-        # ── Status bar ──────────────────────────────────────────────────────
+        #Status bar
         self.status_var = tk.StringVar(value="Ready.")
         status_bar = ttk.Label(root, textvariable=self.status_var,
                                relief=tk.SUNKEN, anchor=tk.W, padding=(6, 2))
@@ -444,7 +529,7 @@ class SortApp:
 
         self._refresh_preview()
 
-    # ── Helpers ─────────────────────────────────────────────────────────────
+    #Helpers
 
     def _browse(self):
         chosen = filedialog.askdirectory(initialdir=self.folder_var.get(),
@@ -560,6 +645,61 @@ class SortApp:
             self._refresh_preview()
             self.status_var.set(f"Added category '{name}'.")
 
+    def _add_existing_category(self):
+        target_dir = Path(self.folder_var.get()).expanduser().resolve()
+        chosen = filedialog.askdirectory(
+            initialdir=str(target_dir),
+            title="Select an existing folder to use as a category",
+            parent=self.root,
+        )
+        if not chosen:
+            return
+
+        chosen_path = Path(chosen).expanduser().resolve()
+        if not chosen_path.is_dir():
+            messagebox.showwarning("Invalid Folder", "The selected path is not a folder.", parent=self.root)
+            return
+
+        try:
+            relative = chosen_path.relative_to(target_dir)
+        except ValueError:
+            messagebox.showwarning(
+                "Invalid Folder",
+                "The selected folder must be inside the folder to sort.",
+                parent=self.root,
+            )
+            return
+
+        if not relative.parts:
+            messagebox.showwarning(
+                "Invalid Folder",
+                "Cannot add the root folder itself as a category.",
+                parent=self.root,
+            )
+            return
+
+        name = normalize_folder_name(relative.as_posix())
+        if not name:
+            messagebox.showwarning(
+                "Invalid Name",
+                "Enter a folder name like 'code' or 'code/python'.",
+                parent=self.root,
+            )
+            return
+        if name.lower() == OTHER_CATEGORY.lower():
+            messagebox.showwarning("Invalid Name", f"'{OTHER_CATEGORY}' is reserved for uncategorized files.", parent=self.root)
+            return
+        if name in self.categories:
+            messagebox.showwarning("Duplicate", "That folder category already exists.", parent=self.root)
+            return
+
+        self.categories[name] = set()
+        self.category_name_filters.setdefault(name, "")
+        if self._save_categories_with_feedback():
+            self._refresh_category_list()
+            self._refresh_preview()
+            self.status_var.set(f"Added existing folder category '{name}'.")
+
     def _rename_category(self):
         old_name = self._selected_category_name()
         if not old_name:
@@ -631,7 +771,7 @@ class SortApp:
         self.manual_overrides = {
             file_name: folder_name
             for file_name, folder_name in self.manual_overrides.items()
-            if folder_name != name
+            if not is_folder_prefix(folder_name, name)
         }
         if self._save_categories_with_feedback():
             self._refresh_category_list()
@@ -998,6 +1138,7 @@ class SelectParentFolderDialog:
         self.result = None
         self.win.destroy()
 
+# Functions for the CategoryPropertiesDialog class allowing users to manage filetypes
 
 class CategoryPropertiesDialog:
     def __init__(self, parent, category_name: str, categories, category_name_filters, on_change):
@@ -1152,13 +1293,14 @@ class CategoryPropertiesDialog:
         self.on_change()
 
 
-def launch_gui(initial_dry_run: bool = False, categories=None, category_name_filters=None):
+def launch_gui(initial_dry_run: bool = False, categories=None, category_name_filters=None, initial_folder=None):
     root = tk.Tk()
     SortApp(
         root,
         initial_dry_run=initial_dry_run,
         initial_categories=categories,
         initial_name_filters=category_name_filters,
+        initial_folder=initial_folder,
     )
     root.mainloop()
 
